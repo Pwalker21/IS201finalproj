@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Emoji Escape</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: sans-serif;
+      background-color: #000;
+      color: #fff;
+    }
+    #player {
+      position: absolute;
+      font-size: 48px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .emoji {
+      position: absolute;
+      font-size: 36px;
+      transition: transform 0.1s linear;
+    }
+    #scoreBoard, #gameOverScreen, #powerUps {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 100;
+    }
+    #scoreBoard {
+      font-size: 18px;
+    }
+    #startBtn {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 16px 32px;
+      font-size: 24px;
+      cursor: pointer;
+      z-index: 200;
+    }
+    #gameOverScreen {
+      display: none;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 28px;
+      text-align: center;
+    }
+    #gameOverScreen button {
+      margin-top: 10px;
+      font-size: 18px;
+      padding: 10px 20px;
+      cursor: pointer;
+    }
+    #powerUps {
+      top: auto;
+      bottom: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="player">🏃🏾‍♂️</div>
+  <div id="scoreBoard">
+    Score: <span id="score">0</span> |
+    High Score: <span id="highScore">0</span> |
+    Lives: <span id="lives">3</span>
+  </div>
+  <div id="powerUps">Active Power-ups: <span id="activePowerUps">None</span></div>
+  <button id="startBtn">Start Game</button>
+  <div id="gameOverScreen">
+    <div>Game Over!</div>
+    <button onclick="startGame()">Play Again</button>
+  </div>
+
+  <script>
+    const player = document.getElementById("player");
+    const scoreDisplay = document.getElementById("score");
+    const highScoreDisplay = document.getElementById("highScore");
+    const livesDisplay = document.getElementById("lives");
+    const startBtn = document.getElementById("startBtn");
+    const gameOverScreen = document.getElementById("gameOverScreen");
+    const activePowerUpsDisplay = document.getElementById("activePowerUps");
+
+    let playerX = 200, playerY = 200;
+    let keys = {};
+    let emojis = [];
+    let bullets = [];
+    let score = 0, highScore = 0, lives = 3;
+    let gameActive = false;
+    let shieldActive = false, speedBoostActive = false;
+    let emojiInterval, moveInterval, shootInterval;
+
+    document.addEventListener("keydown", (e) => keys[e.key] = true);
+    document.addEventListener("keyup", (e) => keys[e.key] = false);
+
+    function movePlayer() {
+      const speed = speedBoostActive ? 10 : 7;
+      if (keys["ArrowUp"]) playerY -= speed;
+      if (keys["ArrowDown"]) playerY += speed;
+      if (keys["ArrowLeft"]) playerX -= speed;
+      if (keys["ArrowRight"]) playerX += speed;
+
+      const maxX = window.innerWidth - 48;
+      const maxY = window.innerHeight - 48;
+      playerX = Math.max(0, Math.min(playerX, maxX));
+      playerY = Math.max(0, Math.min(playerY, maxY));
+
+      player.style.left = playerX + "px";
+      player.style.top = playerY + "px";
+    }
+
+    function spawnEmoji() {
+      const emoji = document.createElement("div");
+      emoji.classList.add("emoji");
+      const isCoin = Math.random() < 0.6;
+      const isPowerUp = Math.random() < 0.35;
+
+      if (isCoin) {
+        emoji.textContent = "🪙";
+        emoji.isCoin = true;
+      } else if (isPowerUp) {
+        emoji.textContent = Math.random() < 0.5 ? "🛡️" : "⚡";
+        emoji.isPowerUp = true;
+      } else {
+        emoji.textContent = "🚔";
+        emoji.isCoin = false;
+      }
+
+      let x, y;
+      do {
+        x = Math.random() * (window.innerWidth - 30);
+        y = Math.random() * (window.innerHeight - 30);
+      } while (Math.abs(x - playerX) < 50 && Math.abs(y - playerY) < 50);
+
+      emoji.style.left = x + "px";
+      emoji.style.top = y + "px";
+
+      emoji.dx = (Math.random() - 0.5) * 6;
+      emoji.dy = (Math.random() - 0.5) * 6;
+
+      document.body.appendChild(emoji);
+      emojis.push(emoji);
+    }
+
+    function moveEmojis() {
+      emojis.forEach((emoji, i) => {
+        let x = parseFloat(emoji.style.left);
+        let y = parseFloat(emoji.style.top);
+
+        x += emoji.dx;
+        y += emoji.dy;
+
+        if (x < 0 || x > window.innerWidth - 30) emoji.dx *= -1;
+        if (y < 0 || y > window.innerHeight - 30) emoji.dy *= -1;
+
+        emoji.style.left = x + "px";
+        emoji.style.top = y + "px";
+
+        if (checkCollision(player, emoji)) {
+          if (emoji.isCoin) {
+            score++;
+            emoji.remove();
+            emojis.splice(i, 1);
+          } else if (emoji.isPowerUp) {
+            activatePowerUp(emoji.textContent);
+            emoji.remove();
+            emojis.splice(i, 1);
+          } else {
+            if (!shieldActive) {
+              showExplosion(playerX, playerY);
+              lives--;
+              if (lives <= 0) endGame();
+              livesDisplay.textContent = `Lives: ${lives}`;
+            }
+            emoji.remove();
+            emojis.splice(i, 1);
+          }
+        }
+      });
+    }
+
+    function fireBulletFromPolice(policeEmoji) {
+      const bullet = document.createElement("div");
+      bullet.classList.add("emoji");
+      bullet.textContent = "💥";
+      bullet.style.left = policeEmoji.style.left;
+      bullet.style.top = policeEmoji.style.top;
+
+      const playerRect = player.getBoundingClientRect();
+      const policeRect = policeEmoji.getBoundingClientRect();
+      const dx = playerRect.x - policeRect.x;
+      const dy = playerRect.y - policeRect.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const speed = 6;
+
+      bullet.dx = (dx / len) * speed;
+      bullet.dy = (dy / len) * speed;
+
+      document.body.appendChild(bullet);
+      bullets.push(bullet);
+
+      setTimeout(() => {
+        bullet.remove();
+        bullets = bullets.filter(b => b !== bullet);
+      }, 5000);
+    }
+
+    function moveBullets() {
+      bullets.forEach((b, i) => {
+        let x = parseFloat(b.style.left);
+        let y = parseFloat(b.style.top);
+        x += b.dx;
+        y += b.dy;
+        b.style.left = x + "px";
+        b.style.top = y + "px";
+
+        if (checkCollision(player, b)) {
+          if (!shieldActive) {
+            showExplosion(playerX, playerY);
+            lives--;
+            if (lives <= 0) endGame();
+            livesDisplay.textContent = `Lives: ${lives}`;
+          }
+          b.remove();
+          bullets.splice(i, 1);
+        }
+      });
+    }
+
+    function checkCollision(a, b) {
+      const rect1 = a.getBoundingClientRect();
+      const rect2 = b.getBoundingClientRect();
+      return !(
+        rect1.right < rect2.left ||
+        rect1.left > rect2.right ||
+        rect1.bottom < rect2.top ||
+        rect1.top > rect2.bottom
+      );
+    }
+
+    function showExplosion(x, y) {
+      const boom = document.createElement("div");
+      boom.textContent = "💥";
+      boom.style.position = "absolute";
+      boom.style.left = x + "px";
+      boom.style.top = y + "px";
+      boom.style.fontSize = "48px";
+      boom.style.pointerEvents = "none";
+      boom.style.transition = "opacity 0.5s";
+      boom.style.zIndex = "9999";
+      document.body.appendChild(boom);
+      setTimeout(() => boom.style.opacity = "0", 100);
+      setTimeout(() => boom.remove(), 600);
+    }
+
+    function activatePowerUp(type) {
+      if (type === "🛡️") {
+        shieldActive = true;
+        updatePowerUpDisplay();
+        setTimeout(() => {
+          shieldActive = false;
+          updatePowerUpDisplay();
+        }, 5000);
+      } else if (type === "⚡") {
+        speedBoostActive = true;
+        updatePowerUpDisplay();
+        setTimeout(() => {
+          speedBoostActive = false;
+          updatePowerUpDisplay();
+        }, 5000);
+      }
+    }
+
+    function updatePowerUpDisplay() {
+      let powers = [];
+      if (shieldActive) powers.push("Shield");
+      if (speedBoostActive) powers.push("Speed");
+      activePowerUpsDisplay.textContent = powers.length ? powers.join(", ") : "None";
+    }
+
+    function startGame() {
+      score = 0;
+      lives = 3;
+      playerX = 200;
+      playerY = 200;
+      gameActive = true;
+      emojis.forEach(e => e.remove());
+      bullets.forEach(b => b.remove());
+      emojis = [];
+      bullets = [];
+
+      scoreDisplay.textContent = score;
+      livesDisplay.textContent = lives;
+      updatePowerUpDisplay();
+      gameOverScreen.style.display = "none";
+      startBtn.style.display = "none";
+
+      emojiInterval = setInterval(spawnEmoji, 700);
+      moveInterval = setInterval(() => {
+        movePlayer();
+        moveEmojis();
+        moveBullets();
+        scoreDisplay.textContent = score;
+        if (score > highScore) {
+          highScore = score;
+          highScoreDisplay.textContent = highScore;
+        }
+      }, 30);
+      shootInterval = setInterval(() => {
+        emojis.forEach(e => {
+          if (!e.isCoin && !e.isPowerUp && Math.random() < 0.3) {
+            fireBulletFromPolice(e);
+          }
+        });
+      }, 1000);
+    }
+
+    function endGame() {
+      gameActive = false;
+      clearInterval(emojiInterval);
+      clearInterval(moveInterval);
+      clearInterval(shootInterval);
+      gameOverScreen.style.display = "block";
+    }
+
+    startBtn.onclick = startGame;
+  </script>
+</body>
+</html>
